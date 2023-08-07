@@ -11,7 +11,9 @@ class Game:
         self.clock = pygame.time.Clock()
         self.level = Level()
         pygame.display.set_caption("城镇探索者 CITY TRAVELERS")
+        self.is_fullscreen = False
 
+    #全屏
     def toggle_fullscreen(self):
         self.is_fullscreen = not self.is_fullscreen
         if self.is_fullscreen:
@@ -28,6 +30,9 @@ class Game:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         self.toggle_fullscreen()
+                    elif event.key == pygame.K_f:
+                        self.toggle_fullscreen()
+                        print(event.type, event.key)
 
             #游戏主体
 
