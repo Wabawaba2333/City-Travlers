@@ -22,7 +22,7 @@ class Player(pygame.sprite.Sprite):
 			self.direction.y = 1
 		else:
 			self.direction.y = 0
-			#pass
+		pass
 
         #x轴左右 
 		if keys[pygame.K_RIGHT]:
@@ -31,7 +31,7 @@ class Player(pygame.sprite.Sprite):
 			self.direction.x = -1
 		else:
 			self.direction.x = 0
-			#pass
+		pass
 
 
 # 确保玩家角色的移动方向是单位向量，即其长度为 1
