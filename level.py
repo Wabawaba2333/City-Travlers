@@ -3,11 +3,11 @@ from settings import *
 from btree import Btree
 from player import Player
 from debug import debug
+from follower import Follower
 #level是游戏中最重要的模块
 
 class Level:
 	def __init__(self):
-
 		# get the display surface 就是获取Pygame当前使用的显示表面，并将其存储在display_surface
 		self.display_surface = pygame.display.get_surface()
 
@@ -45,6 +45,7 @@ class YaxelCameragroup(pygame.sprite.Group):
 		self.offset = pygame.math.Vector2(0, 0)
 		#创建一个offset长方形，让他固定在左上加自身偏移量
 
+#所有画出来的都在这里，大部分根据y轴确定位置
 	def custom_draw(self,player):
 		#我们让视角时刻找到玩家位置
 		new_offset = pygame.math.Vector2(self.offset.x, self.offset.y)
@@ -52,6 +53,7 @@ class YaxelCameragroup(pygame.sprite.Group):
 		self.offset.x = player.rect.centerx - self.half_width
 		self.offset.y = player.rect.centery - self.half_height
 
-		for sprite in self.sprites():
+		#for sprite in self.sprites():
+		for sprite in sorted(self.sprites(),key = lambda sprite: sprite.rect.centery):
 			offset_pos = sprite.rect.topleft - self.offset
 			self.display_surface.blit(sprite.image,offset_pos)
