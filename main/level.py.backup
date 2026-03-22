@@ -1,0 +1,751 @@
+import pygame
+import os
+import pytmx
+import glob
+import json
+import math
+import time
+import xml.etree.ElementTree as ET
+import shutil
+from pytmx.util_pygame import load_pygame
+from ui import UI
+from player import Player
+from debug import debug
+from follower import Follower
+from pathlib import Path
+
+
+# TMX 处理目录
+ORIGINAL_TMX_DIR = "./images"  # 原始 TMX 目录
+FIXED_TMX_DIR = "./fixed_tmx"  # 处理后 TMX 保存目录
+TILESET_DIR = os.path.abspath("./tilesets")  # **Tileset 目录 (请修改为实际路径)**
+
+def clean_tsx_source(src, tsx_file_path, category=""): 
+    """统一路径清洗规则"""
+    map_folder = Path(tsx_file_path).parent.parent.name
+    filename = Path(src).name.split("?")[0] 
+
+    path_components = []
+    if category:
+        effective_path = f"{category}/{filename}"
+    else:
+        effective_path = filename
+    
+    new_src = Path(f"../../../images/{map_folder}/png/{effective_path}")
+    
+    normalized_src = os.path.normpath(new_src.as_posix())
+    if not normalized_src.lower().endswith(".png"):
+        normalized_src += ".png"
+    
+    return normalized_src.replace("\\", "/")
+
+def fix_tsx_paths(tsx_folder):
+    print(f"\n🔥 预处理程序启动！当前处理地图目录: {Path(tsx_folder).parent.name}")
+    category_mapping = {
+        "deco": "deco",
+        "house": "house",
+        "像素地砖": "",  # 空字符串表示无分类目录
+        "右街区": "house"
+    }
+
+    for tsx_file in Path(tsx_folder).glob("*.tsx"):
+        print(f"\n🔍 正在处理: {tsx_file} (Last modified: {tsx_file.stat().st_mtime})")
+        tree = ET.parse(tsx_file)
+        root = tree.getroot()
+        category = category_mapping.get(tsx_file.stem, "")
+        expected_dir = tsx_file.parent.parent / "png" / category
+        original_mtime = tsx_file.stat().st_mtime
+        
+        print(f"\n🔧 处理文件: {tsx_file.name}")
+        print(f"✅ 资源目录: {expected_dir}")
+        
+        if category and not expected_dir.exists():
+            print(f"🔥 严重错误: 目录{expected_dir}不存在！")
+            continue
+        
+        for image in root.findall(".//image"):
+            src = image.get("source")
+            try:
+                # ↓ 正确传递三个参数 ↓
+                new_src = clean_tsx_source(src, str(tsx_file), category)
+                physical_path = tsx_file.parent.parent / "png" / Path(new_src).name
+            except Exception as e:
+                print(f"❗ 路径清洗失败: {str(e)}")
+                continue
+            print(f"\n原始路径: {src}")
+            # 在image循环内添加
+            print(f"┌── XML节点处理记录")
+            print(f"│ 原始路径: {src}")
+            print(f"│ 分类映射: {category} (来自{tsx_file.stem})")
+            print(f"│ 计算路径: {new_src}")
+            print(f"└── 物理路径验证: {physical_path.exists()}")
+
+            # 新增备用路径检查
+            fallback_path = tsx_file.parent.parent / new_src.replace("../", "")
+            if not physical_path.exists() and fallback_path.exists():
+                print(f"⚠️  使用备用路径: {fallback_path}")
+                physical_path = fallback_path
+
+            if not physical_path.exists():
+                print(f"❌ 文件缺失: {physical_path.name}")
+                print(f"   检查路径: {physical_path}")
+                print(f"   1. 原文件位置: {Path(src).name} 是否在 {expected_dir}?")
+                print(f"   2. 分类目录是否正确? 当前分类: {category}")
+            else:
+                print(f"✅ 验证通过: {physical_path}")
+                
+            image.set("source", new_src)
+            new_mtime = tsx_file.stat().st_mtime
+            print(f"🕒 {tsx_file.name} 修改状态: {'已更新' if new_mtime != original_mtime else '未改动'}")
+            print(f"  修正路径: {new_src}")
+        
+        # 保持原路径保存（覆盖原始文件）
+        tree.write(tsx_file, encoding="UTF-8", xml_declaration=True)
+
+# ✅ REMOVED MODULE-LEVEL EXECUTION - This was causing crashes on import
+# The fix_tsx_paths function is called from game.py's __main__ block instead
+# fix_tsx_paths("C:/Users/kiwi_/Downloads/City-Travlers-main/images/钟楼广场/tsx")
+
+
+def validate_paths(tsx_folder):
+    map_name = Path(tsx_folder).parent.name
+    required_dirs = ["png/house", "png/deco"]
+    map_folder = Path(tsx_folder).parent
+    required = [
+        ("png", "必须存在"),
+        ("tmx", "地图文件目录"), 
+        ("tsx", "预处理目录")
+    ]
+    print(f"\n🔍 验证地图结构: {map_folder.name}")
+    for folder, desc in required:
+        path = map_folder / folder
+        status = "✅" if path.exists() else "❌"
+        print(f"{status} {folder}/ ({desc})")
+    print(f"\n🗂️ 地图目录结构验证: {map_name}")
+    for d in required_dirs:
+        check_path = Path(tsx_folder).parent / d
+        exists = "✅" if check_path.exists() else "❌"
+        print(f"{exists} {check_path}")
+    for tsx_file in Path(tsx_folder).glob("*.tsx"):
+        tree = ET.parse(tsx_file)
+        print(f"\n🔍 Verifying: {tsx_file.name}")
+        
+        for image in tree.findall(".//image"):
+            src = image.get("source")
+            # 添加路径自动修正
+            corrected_folder = src.split("/")[-2].replace("txs", "tsx")  # 修正拼写错误
+            actual_path = tsx_file.parent.parent / "png" / corrected_folder / src.split("/")[-1]
+            
+            # 双重验证机制
+            if not actual_path.exists():
+                fallback_path = tsx_file.parent.parent / "png" / src.split("/")[-2] / src.split("/")[-1]
+                if fallback_path.exists():
+                    actual_path = fallback_path
+            
+            exists = "✅ Exists" if actual_path.exists() else "❌ Missing"
+            print(f"{exists}: {actual_path}")
+
+
+def fix_tmx_coordinates(directory):
+    """ 遍历目录中的所有 TMX 文件，修正 object 和 layer 的 x/y 坐标，并改 tileset 为绝对路径 """
+    if not os.path.exists(FIXED_TMX_DIR):
+        os.makedirs(FIXED_TMX_DIR)
+
+    # 找到所有 .tmx 文件
+    tmx_files = glob.glob(os.path.join(directory, "**", "*.tmx"), recursive=True)
+
+
+    if not tmx_files:
+        print("❌ 没有找到 .tmx 文件")
+        return
+    print(f"🔍 找到 {len(tmx_files)} 个 .tmx 文件，开始修正坐标和 Tileset 路径...")
+
+    for file_path in tmx_files:
+        print(f"🛠 处理文件: {file_path}")
+        abs_path = None  
+
+        # 解析 XML
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+        # 修正 object 坐标 (四舍五入)
+        for obj in root.findall(".//object"):
+            if "x" in obj.attrib:
+                obj.attrib["x"] = str(round(float(obj.attrib["x"])))
+            if "y" in obj.attrib:
+                obj.attrib["y"] = str(round(float(obj.attrib["y"])))
+
+        # 修正 layer 偏移坐标 (四舍五入)
+        for layer in root.findall(".//layer"):
+            if "offsetx" in layer.attrib:
+                layer.attrib["offsetx"] = str(round(float(layer.attrib["offsetx"])))
+            if "offsety" in layer.attrib:
+                layer.attrib["offsety"] = str(round(float(layer.attrib["offsety"])))
+
+
+        # 修正 tileset 的路径 -> 绝对路径
+        for tileset in root.findall("tileset"):
+            if "source" in tileset.attrib:
+                original_source = tileset.attrib["source"]  # 例如: "../tsx/像素地砖.tsx"
+
+                # 获取地图名称（如 "钟楼广场"）
+                map_name = os.path.basename(os.path.dirname(file_path))
+
+                # 修正 fix_tmx_coordinates 函数中的路径生成
+                abs_path = os.path.normpath(os.path.abspath(os.path.join(
+                    "images",  # 基准路径改为项目根目录下的 images
+                    Path(file_path).parent.parent.name,  # 地图文件夹名（如"第一关左街区"）
+                    "tsx",
+                    os.path.basename(original_source)
+                )))
+
+
+                print(f"🔄 转换路径: {original_source} -> {abs_path}")
+
+                if not os.path.exists(os.path.dirname(abs_path)):
+                    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+                if os.path.exists(abs_path):
+                    tileset.attrib["source"] = abs_path
+                    print(f"✅ 绝对路径转换成功：{abs_path}")
+                else:
+                    print(f"❌ 严重错误：TSX文件不存在于 {abs_path}")
+                    raise FileNotFoundError(f"TSX文件缺失：{abs_path}")
+
+                abs_path = os.path.normpath(abs_path)  # <--- 移动到这里
+            if "source" in tileset.attrib:
+                fixed_path = Path(tileset.attrib["source"]).as_posix().replace("../", "")
+            else:
+                print(f"⚠️ tileset 节点缺少 'source' 属性，跳过处理: {tileset}")
+                continue
+            tileset.attrib["source"] = str(Path("images") / Path(tileset.attrib["source"]).name)
+            print(f"🔄 最终tileset路径: {tileset.attrib['source']}")
+        if abs_path is None:
+            raise ValueError("未找到任何tileset定义")
+
+
+        # **生成新的文件名，例如 `fixed_第一关左街区.tmx`**
+        original_filename = os.path.basename(file_path)
+        fixed_filename = f"fixed_{original_filename}"
+        fixed_file_path = os.path.join(FIXED_TMX_DIR, fixed_filename)
+
+        # **保存修正后的 TMX 文件**
+        tree.write(fixed_file_path, encoding="UTF-8")
+        #print(f"✅ 修正后保存: {fixed_file_path}")
+
+    print("🎯 所有 TMX 文件修正完毕！")
+
+# ✅ REMOVED MODULE-LEVEL EXECUTION - This was causing crashes on import
+# The fix_tmx_coordinates function is called from game.py's __main__ block instead
+# **🚀 运行 TMX 修正**
+# fix_tmx_coordinates(ORIGINAL_TMX_DIR)
+
+
+class TileSprite(pygame.sprite.Sprite):
+    """地图图块精灵类"""
+    def __init__(self, image, x, y, layer_priority=0):
+        super().__init__()
+        self.image = image
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.layer_priority = layer_priority  # 添加图层优先级
+
+
+class AnimatedTileSprite(TileSprite):
+    """支持动画的地图图块精灵类"""
+    def __init__(self, images, x, y, layer_priority=0, target_size=(16, 16)):
+        resized_images = [pygame.transform.scale(img, target_size) for img in images]
+        super().__init__(resized_images[0], x, y, layer_priority)
+        self.images = resized_images
+        self.frame_index = 0
+        self.animation_speed = 5  # 动画播放速度
+        self.last_update_time = pygame.time.get_ticks()
+
+
+    def update(self):
+        current_time = pygame.time.get_ticks()
+        if current_time - self.last_update_time > self.animation_speed * 100:
+            self.last_update_time = current_time
+            self.frame_index = (self.frame_index + 1) % len(self.images)
+            self.image = self.images[self.frame_index]
+
+class Level:
+    def __init__(self, map_file, screen):
+        self.display_surface = pygame.display.get_surface()
+                # 确保加载的是修正后的 TMX
+         # **获取 `fixed_` 前缀的修正文件名**
+        original_filename = os.path.basename(map_file)
+        fixed_filename = f"fixed_{original_filename}"
+        fixed_map_file = os.path.join(FIXED_TMX_DIR, fixed_filename)
+
+
+        # **优先加载修正后的 TMX**
+        if os.path.exists(fixed_map_file):
+            self.map_file = fixed_map_file
+        else:
+            self.map_file = map_file  # 如果没有修正版本，使用原文件
+       
+        print(f"📌 加载 TMX 文件: {self.map_file}")
+        self.map = pytmx.load_pygame(map_file, pixelalpha=True)
+        self.tilewidth = self.map.tilewidth  # 图块宽度
+        self.tileheight = self.map.tileheight  # 图块高度
+        self.visible_sprites = YaxelCameragroup(self.display_surface, self.tilewidth, self.tileheight)
+        self.obstacle_sprites = pygame.sprite.Group()
+        self.large_camera = True  # 初始状态为大镜头
+        self.shift_pressed = False
+
+        # Debugging information
+        #print(f"Initializing map: {map_file}")
+        #print(f"Map size: {self.map.width}x{self.map.height}, Tile size: {self.map.tilewidth}x{self.map.tileheight}")
+
+
+        # 初始化玩家和其他对象
+        self.player = Player(
+            (100, 900),
+            [self.visible_sprites],
+            self.obstacle_sprites,
+            self
+        )
+        self.player.layer_priority = 6  # 为玩家对象设置图层优先级
+        self.follower = Follower(
+            (150, 1000),
+            self.player,
+            [self.visible_sprites],
+            self.obstacle_sprites
+        )
+        self.follower.layer_priority = 6  # 为Follower对象设置图层优先级
+        self.ui = UI(self.display_surface)
+
+        # 加载地图数据
+        self.load_tmx_map()
+        self.map_transitions = {
+            os.path.join(FIXED_TMX_DIR, "fixed_第一关左街区.tmx"): {
+                'right': (os.path.join(FIXED_TMX_DIR, "fixed_钟楼广场.tmx"), 'left'),
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_公园.tmx"), 'down'),
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_工业区.tmx"), 'up')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_钟楼广场.tmx"): {
+                'left': (os.path.join(FIXED_TMX_DIR, "fixed_第一关左街区.tmx"), 'right'),
+                'right': (os.path.join(FIXED_TMX_DIR, "fixed_右街区.tmx"), 'left'),
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_北街区.tmx"), 'down'),
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_南街区.tmx"), 'up')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_右街区.tmx"): {
+                'left': (os.path.join(FIXED_TMX_DIR, "fixed_钟楼广场.tmx"), 'right'),
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_居民区.tmx"), 'down'),
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_农场.tmx"), 'up')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_北街区.tmx"): {
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_钟楼广场.tmx"), 'up'),
+                'right': (os.path.join(FIXED_TMX_DIR, "fixed_居民区.tmx"), 'left')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_南街区.tmx"): {
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_钟楼广场.tmx"), 'down'),
+                'right': (os.path.join(FIXED_TMX_DIR, "fixed_农场.tmx"), 'left')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_居民区.tmx"): {
+                'left': (os.path.join(FIXED_TMX_DIR, "fixed_北街区.tmx"), 'right'),
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_右街区.tmx"), 'up')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_工业区.tmx"): {
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_第一关左街区.tmx"), 'down')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_农场.tmx"): {
+                'left': (os.path.join(FIXED_TMX_DIR, "fixed_南街区.tmx"), 'right'),
+                'up': (os.path.join(FIXED_TMX_DIR, "fixed_右街区.tmx"), 'down')
+            },
+            os.path.join(FIXED_TMX_DIR, "fixed_公园.tmx"): {
+                'down': (os.path.join(FIXED_TMX_DIR, "fixed_第一关左街区.tmx"), 'up'),
+                'right': (os.path.join(FIXED_TMX_DIR, "fixed_北街区.tmx"), 'left')
+            }
+        }
+
+        # 新增: 冷却时间
+        self.transition_cooldown = 300  # 传送冷却时间（毫秒）
+        self.last_transition_time = 0  # 上次传送的时间
+
+    def validate_map_connections(self):
+        """ 九宫格布局验证 """
+        print("\n🔍 开始九宫格地图连接验证")
+        expected_layout = {
+            'fixed_第一关左街区.tmx': ['right', 'up', 'down'],
+            'fixed_钟楼广场.tmx': ['left', 'right', 'up', 'down'],
+            'fixed_右街区.tmx': ['left', 'up', 'down'],
+            'fixed_北街区.tmx': ['down', 'right'],
+            'fixed_南街区.tmx': ['up', 'right'],
+            'fixed_居民区.tmx': ['left', 'down'],
+            'fixed_工业区.tmx': ['up'],
+            'fixed_农场.tmx': ['left', 'up'],
+            'fixed_公园.tmx': ['down', 'right']
+        }
+
+        error_count = 0
+        for map_file in self.map_transitions:
+            base_name = os.path.basename(map_file)
+            actual = list(self.map_transitions[map_file].keys())
+            expected = expected_layout.get(base_name, [])
+            
+            if sorted(actual) != sorted(expected):
+                error_count += 1
+                print(f"❌ {base_name} 方向异常")
+                print(f"   应包含: {expected}")
+                print(f"   实际为: {actual}")
+                print("   ⚠️ 请检查 scene_graph 和 map_transitions 的定义")
+        
+        if error_count == 0:
+            print("✅ 所有地图连接方向验证通过")
+        else:
+            print(f"🔥 发现 {error_count} 处连接错误")
+
+    def load_tmx_map(self):
+        tmx_data = self.map  # ✅ 确保 tmx_data 被正确赋值
+        start_time = time.time()
+        """加载 TMX 并修正坐标"""
+
+        self.walkable_tiles = set()  # 保存可行走的图块位置
+        # 根据当前地图文件动态定义图层优先级
+        if self.map_file == './images/第一关左街区/tmx/第一关左街区.tmx':
+            # 第一块地图的图层优先级
+            layer_priority = {
+                '草地': 1,
+                '河流': 2,
+                '地砖': 3,
+                '地砖2': 4,
+                '可行走区域': 5,  # 不显示但生效
+                '人物走动': 6,
+                'house': 7,
+                '装饰': 8,
+                '遮挡物': 9
+            }
+        elif self.map_file == './images/右街区/tmx/右街区.tmx':
+            # 第二块地图的图层优先级
+            layer_priority = {
+                '可行走区域': 1,  # 玩家只能在这个图层中标记的区域内移动
+                '图块层 1': 2,  # 基础地板
+                '图块层 2': 3,  # 装饰地板
+                '图块层 3': 4,  # 其他地板
+                '人物动画图层': 6,  # 动态图层，比如动画河流
+                'house': 7,  # 房屋等障碍物
+                'deco1': 8,  # 装饰物 1
+                'deco2': 9   # 装饰物 2
+            }
+
+        else:
+            # 默认优先级，如果没有为地图手动设置
+            layer_priority = {
+                '默认图层': 1,
+                '其他图层': 2
+            }
+
+        # 加载动画图块资源
+        self.water_frames = [
+            pygame.image.load('./images/Water/water1.png').convert_alpha(),
+            pygame.image.load('./images/Water/water2.png').convert_alpha()
+        ]
+
+
+        # 确保排序图层是有效的列表
+        sorted_layers = sorted(
+            [layer for layer in tmx_data.layers],
+            key=lambda layer: layer_priority.get(layer.name, 10)  # 如果图层不在字典中，优先级为 10
+        )
+
+        for layer in sorted_layers:
+            if isinstance(layer, pytmx.TiledTileLayer):  # 图块层
+                priority = layer_priority.get(layer.name, 0)
+                if layer.name == '可行走区域':  # 处理可行走区域图层
+                    print(f"加载可行走区域: {layer.name}")
+                    for x, y, gid in layer:
+                        if gid != 0:  # 只有非空的图块才标记为可行走区域
+                            self.walkable_tiles.add((x, y))
+                            #print(f"可行走图块位置: ({x}, {y})")  # 调试输出
+
+                            # 添加一个可视化的矩形以显示可行走区域
+                            walkable_surface = pygame.Surface((tmx_data.tilewidth, tmx_data.tileheight))
+                            walkable_surface.fill((0, 255, 0))  # 使用绿色填充
+                            walkable_surface.set_alpha(100)  # 设置半透明
+                            walkable_sprite = TileSprite(walkable_surface, x * tmx_data.tilewidth, y * tmx_data.tileheight, priority)
+                            self.visible_sprites.add(walkable_sprite)
+
+                elif layer.name == '人物动画图层':  # 加载动画图块层
+                    print(f"加载动画图块层: {layer.name}")
+                    for x, y, gid in layer:
+                        if gid == 0:
+                            continue
+                        tile_sprite = AnimatedTileSprite(
+                            self.water_frames,
+                            x * tmx_data.tilewidth,
+                            y * tmx_data.tileheight,
+                            priority,
+                            target_size=(16, 16)
+                        )
+                        self.visible_sprites.add(tile_sprite)
+                else:
+                    print(f"加载图块层: {layer.name}")
+                    for x, y, gid in layer:
+                        if gid == 0:  # 跳过空白图块
+                            continue
+                        tile_image = tmx_data.get_tile_image_by_gid(gid)
+                        if tile_image:
+                            tile_sprite = TileSprite(tile_image, x * tmx_data.tilewidth, y * tmx_data.tileheight, priority)
+                            self.visible_sprites.add(tile_sprite)
+
+            elif isinstance(layer, pytmx.TiledObjectGroup):  # 对象层
+                priority = layer_priority.get(layer.name, 0)
+                print(f"加载对象层: {layer.name}")
+                for obj in layer:
+                    if obj.image:  # 检查对象是否有图片
+                        obj_x = obj.x
+                        obj_y = obj.y
+                        obj_width = obj.width if hasattr(obj, 'width') else obj.image.get_width()
+                        obj_height = obj.height if hasattr(obj, 'height') else obj.image.get_height()
+
+                        # 确保基准点对齐地图的 tile grid
+                        obj_x = int(obj_x)
+                        obj_y = int(obj_y)
+
+                        # 创建并添加到 visible_sprites
+                        obj_sprite = TileSprite(obj.image, obj_x, obj_y, priority)
+                        #print(f"对象加载成功: {layer.name}, rect={obj_sprite.rect}, size=({obj_width}x{obj_height})")
+                        self.visible_sprites.add(obj_sprite)
+
+            elif isinstance(layer, pytmx.TiledImageLayer):  # 图片层
+                print(f"加载图片层: {layer.name}")
+                if layer.image:  # 检查图层是否有图片
+                    image_sprite = TileSprite(layer.image, 0, 0, layer_priority.get(layer.name, 0))
+                    self.visible_sprites.add(image_sprite)
+            else:
+                print(f"未知图层类型: {layer.name}")
+
+        print(f"地图解析完成，耗时 {time.time() - start_time:.2f} 秒")
+
+    def load_map(self, new_map_file):
+        """加载新地图文件"""
+        map_folder_name = Path(new_map_file).stem.replace("fixed_", "")
+        original_map_name = Path(new_map_file).stem.replace("fixed_", "")
+        original_resource_path = Path("images") / original_map_name
+        original_map_folder = os.path.dirname(new_map_file)
+        print(f"[PATH FIX] 强制资源根路径: {original_resource_path}")
+        print(f"[PATH FIX] 预期PNG路径: {original_resource_path}/png/像素地砖.png")
+
+        try:
+            # ✅ 强制使用原始资源路径加载
+            self.map = pytmx.load_pygame(
+                new_map_file,
+                pixelalpha=True,
+                root_path=str(original_resource_path)  # 关键修复点
+            )
+        except Exception as e:
+            print(f"🔥 地图加载失败: {str(e)}")
+            print(f"检查路径: {original_resource_path} 是否存在？")
+            raise
+        print(f"✅ 地图加载基准路径已锁定至: {original_map_folder}")
+        self.map_file = new_map_file # 更新当前地图文件
+        self.load_tmx_map()  # 重新加载 TMX 地图
+        print(f"[PATH DEBUG] TMX加载根路径锁定至: {original_resource_path}")
+        print(f"[PATH DEBUG] 正在解析的PNG路径: {original_resource_path}/png/像素地砖/像素地砖.png")
+
+    def check_map_transitions(self):
+        """检测玩家是否触发地图传送"""
+        current_time = pygame.time.get_ticks()
+
+        if current_time - self.last_transition_time < self.transition_cooldown:
+            return  # 如果还在冷却时间内，不进行传送
+
+        if self.map_file in self.map_transitions:
+            transitions = self.map_transitions[self.map_file]
+            map_width_pixels = self.map.width * self.tilewidth
+            map_height_pixels = self.map.height * self.tileheight
+            trigger_margin = self.tilewidth  # 改为1个图块宽度
+            #print(f"\n[传送检测] 玩家位置: ({self.player.rect.x}, {self.player.rect.y})")
+            #print(f"地图边界: {map_width_pixels}x{map_height_pixels}")
+        
+            direction = None
+            if self.player.rect.right >= map_width_pixels - trigger_margin:
+                direction = 'right'
+            elif self.player.rect.left <= trigger_margin:
+                direction = 'left'
+            elif self.player.rect.top <= trigger_margin:
+                direction = 'up'
+            elif self.player.rect.bottom >= map_height_pixels - trigger_margin:
+                direction = 'down'
+            else:
+                return
+
+            if direction and direction in transitions:
+                new_map_file, entry_side = transitions[direction]
+                self.switch_map(new_map_file, entry_side)
+                self.last_transition_time = current_time
+                print(f"[DEBUG] 传送前坐标: ({self.player.rect.x}, {self.player.rect.y})")
+                print(f"[DEBUG] 地图尺寸: {self.map.width*self.tilewidth}x{self.map.height*self.tileheight}")
+
+
+
+    def switch_map(self, new_map_file, entry_side):
+        """ 切换地图，并确保玩家进入可行走区域 """
+        if entry_side not in ['left', 'right', 'up', 'down']:
+            raise ValueError(f"无效入口方向: {entry_side}. 有效方向为 left/right/up/down")
+
+        map_width = self.map.width * self.tilewidth
+        map_height = self.map.height * self.tileheight
+        preserved_y = self.player.rect.centery  # 记录当前Y轴坐标
+        
+        entry_positions = {
+            'left': (self.tilewidth * 2, preserved_y),          # 最左边X坐标，保留Y轴
+            'right': (map_width - self.tilewidth * 2, preserved_y), 
+            'up': (self.player.rect.centerx, map_height - self.tileheight * 2),
+            'down': (self.player.rect.centerx, self.tileheight * 2)
+        }
+        custom_x, custom_y = entry_positions.get(entry_side, (self.tilewidth*2, self.tileheight*2))
+        if entry_side in entry_positions:
+            custom_x, custom_y = entry_positions[entry_side]
+        else:
+            print(f"⚠️ 无效入口方向: {entry_side}, 使用默认坐标")
+            custom_x = self.tilewidth * 2
+            custom_y = self.tileheight * 2
+
+        print(f"[传送调试] 原始坐标: {self.player.rect.center}")
+        print(f"地图尺寸: {map_width}x{map_height}")
+        print(f"进入方向: {entry_side} → 目标位置: {entry_positions[entry_side]}")
+
+        SAFE_MARGIN = self.tilewidth * 2
+        custom_x = max(self.tilewidth * 2, min(custom_x, map_width - self.tilewidth * 2))
+        custom_y = max(self.tileheight * 2, min(custom_y, map_height - self.tileheight * 2))
+        self.player.frozen = True  # 冻结玩家移动
+        print(f"\n🌍 **切换到新地图**: {new_map_file}")
+
+        # 清除旧地图的所有物件
+        for sprite in list(self.visible_sprites):
+            if isinstance(sprite, (TileSprite, AnimatedTileSprite)):
+                self.visible_sprites.remove(sprite)
+        self.obstacle_sprites.empty()  # 清空障碍物精灵组
+        self.load_map(new_map_file)
+        print("\n🗺 **当前地图图块层:**")
+        for layer in self.map.visible_layers:
+            if isinstance(layer, pytmx.TiledTileLayer):
+                print(f"  - {layer.name}")
+
+        # **重新计算 player_tile_x 和 player_tile_y**
+        player_tile_x = custom_x // self.tilewidth
+        player_tile_y = custom_y // self.tileheight
+
+        # **如果传送后玩家不在可行走区域，找到最近的可行走区域**
+        if not hasattr(self, "walkable_tiles") or (player_tile_x, player_tile_y) not in self.walkable_tiles:
+            print(f"⚠️ 玩家传送到不可行走区域 ({player_tile_x}, {player_tile_y})，寻找最近的可行走区域...")
+           
+            nearest_tile = self.find_nearest_walkable_tile(custom_x, custom_y)
+            if nearest_tile:
+                custom_x, custom_y = nearest_tile
+                player_tile_x = custom_x // self.tilewidth
+                player_tile_y = custom_y // self.tileheight
+                print(f"✅ 调整玩家位置至最近的可行走区域: {custom_x}, {custom_y}")
+
+        # 更新玩家位置
+        self.player.rect.centerx = custom_x
+        self.player.rect.centery = custom_y
+        self.player.hitbox.center = self.player.rect.center
+        self.player.rect.center = self.player.hitbox.center
+        self.player.frozen = False  # 解除冻结
+        print("✅ 完成 switch_map 方法")
+
+    def find_nearest_walkable_tile(self, x, y):
+        """ 找到距离 (x, y) 最近的可行走 tile """
+       
+        min_distance = float("inf")
+        nearest_tile = None
+
+        for tile_x, tile_y in self.walkable_tiles:
+            tile_pixel_x = tile_x * self.tilewidth + self.tilewidth // 2
+            tile_pixel_y = tile_y * self.tileheight + self.tileheight // 2
+           
+            # 计算欧几里得距离
+            distance = math.sqrt((x - tile_pixel_x) ** 2 + (y - tile_pixel_y) ** 2)
+
+
+            if distance < min_distance:
+                min_distance = distance
+                nearest_tile = (tile_pixel_x, tile_pixel_y)
+
+        return nearest_tile
+
+    def run(self, dt):
+        """游戏主循环"""
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
+            if not self.shift_pressed:
+                self.large_camera = not self.large_camera
+                self.shift_pressed = True
+        else:
+            self.shift_pressed = False
+
+
+        # 检测地图传送
+        self.check_map_transitions()
+
+class YaxelCameragroup(pygame.sprite.Group):
+    """用于管理和绘制精灵的相机组"""
+    def __init__(self, screen, tilewidth, tileheight):
+        super().__init__()
+        self.display_surface = screen
+        self.half_width = self.display_surface.get_size()[0] // 2
+        self.half_height = self.display_surface.get_size()[1] // 2
+        self.offset = pygame.math.Vector2(0, 0)
+        self.large_camera_scale = 1.3  # 大镜头的缩放比例
+        self.small_camera_scale = 0.9  # 小镜头的缩放比例（视图放大）
+        self.tilewidth = tilewidth  # 记录地图的 tilewidth
+        self.tileheight = tileheight  # 记录地图的 tileheight
+
+    def custom_draw(self, player, large_camera):
+        """根据镜头大小按优先级和特定条件绘制精灵"""
+        scale_factor = self.large_camera_scale if large_camera else self.small_camera_scale
+        # 更新偏移量
+        self.offset.x = player.rect.centerx - self.half_width / scale_factor
+        self.offset.y = player.rect.centery - self.half_height / scale_factor
+        all_sprites = sorted(self.sprites(), key=lambda s: (s.layer_priority, s.rect.bottom))
+
+        # 创建缩放后的表面
+        scaled_surface = pygame.Surface((int(self.display_surface.get_width() / scale_factor),
+                                        int(self.display_surface.get_height() / scale_factor)), pygame.SRCALPHA)
+        scaled_surface.fill((0, 0, 0, 0))  # 使用透明背景
+
+        # 普通精灵按 layer_priority 排序
+        static_sprites = [sprite for sprite in self.sprites() if sprite != player]
+        for sprite in sorted(static_sprites, key=lambda s: s.layer_priority):
+            offset_pos = sprite.rect.topleft - self.offset
+            if offset_pos.x + sprite.image.get_width() > -self.tilewidth and \
+            offset_pos.y + sprite.image.get_height() > -self.tileheight and \
+            offset_pos.x < scaled_surface.get_width() + self.tilewidth and \
+            offset_pos.y < scaled_surface.get_height() + self.tileheight:
+                scaled_surface.blit(sprite.image, offset_pos)
+
+        # 玩家按 Y 坐标排序
+        dynamic_sprites = [player] + [sprite for sprite in static_sprites if sprite.layer_priority in {7, 8, 9}]
+        for sprite in sorted(dynamic_sprites, key=lambda s: s.rect.centery):
+            offset_pos = sprite.rect.topleft - self.offset
+            if offset_pos.x + sprite.image.get_width() > -self.tilewidth and \
+            offset_pos.y + sprite.image.get_height() > -self.tileheight and \
+            offset_pos.x < scaled_surface.get_width() + self.tilewidth and \
+            offset_pos.y < scaled_surface.get_height() + self.tileheight:
+                scaled_surface.blit(sprite.image, offset_pos)
+
+        # 缩放并绘制到显示表面
+        final_surface = pygame.transform.scale(scaled_surface, self.display_surface.get_size())
+        self.display_surface.blit(final_surface, (0, 0))
+
+    if __name__ == "__main__":
+        pygame.init()
+        screen = pygame.display.set_mode((1280, 720))
+        clock = pygame.time.Clock()
+        #self.validate_map_connections()
+        level = Level('./images/第一关左街区/tmx/第一关左街区.tmx')
+
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+            level.visible_sprites.custom_draw(level.player, level.large_camera)
+            level.visible_sprites.update()  # 更新所有精灵
+            level.ui.display(level.player)  # 更新UI界面
+            level.run()  # 运行关卡
+            pygame.display.update()  # 更新屏幕
+            clock.tick(60)  # 设置帧率

@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(dir images钟楼广场tsx像素地砖.tsx)",
+      "Bash(.venvScriptspython:*)",
+      "Bash(dir:*)",
+      "Bash(for dir in \"公园\" \"农场\" \"居民区\" \"工业区\" \"钟楼广场\")",
+      "Bash(do echo \"=== $dir ===\")",
+      "Bash(ls:*)",
+      "Bash(done)",
+      "Bash(\".venv/Scripts/python\" -c \"\nimport pytmx\ntmx = pytmx.TiledMap(''./images/居民区/tmx/居民区.tmx'')\nprint(''居民区地图图层:'')\nfor layer in tmx.layers:\n    print(f''  - {layer.name} (类型: {type(layer).__name__})'')\n\")",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(iconv:*)",
+      "Bash(for dir in \"公园\" \"农场\" \"居民区\" \"工业区\" \"钟楼广场\" \"第一关左街区\" \"右街区\" \"北街区\" \"南街区\")",
+      "Bash(findstr /i \"png tsx\")",
+      "Bash(cat \"d:\\City-Travlers-main\\images\\公园\\tsx\\tree.tsx\")",
+      "Bash(cat tree.tsx)",
+      "Bash(timeout 5 .venv/Scripts/python:*)",
+      "Bash(timeout 8 python:*)",
+      "Bash(timeout 8 \"../.venv/Scripts/python.exe\":*)",
+      "Bash(timeout 8 \"../.venv/Scripts/python.exe\" game.py)",
+      "Bash(timeout 8 \".venv/Scripts/python.exe\":*)",
+      "Bash(set:*)",
+      "Bash(cmd /c \"chcp 65001 >nul && timeout /t 8 /nobreak >nul 2>&1 & .venv\\Scripts\\python.exe main\\game.py\")",
+      "Bash(timeout 10 .venv/Scripts/python:*)",
+      "Bash(cmd /c \"chcp 65001 >nul && timeout /t 10 /nobreak >nul 2>&1 & .venv\\Scripts\\python.exe main\\game.py\")",
+      "Bash(del:*)",
+      "Bash(../.venv/Scripts/python.exe:*)",
+      "Bash(timeout 10 ../.venv/Scripts/python.exe:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
